@@ -218,14 +218,12 @@ function jsonEdit(v: unknown): Edit | null {
     const add = patchLines(o.new_str);
     return (tree) => {
       const before = exists(tree);
-      const nl = before.indexOf('\n');
-      const br = nl > 0 && before[nl - 1] === '\r' ? '\r\n' : '\n';
-      const lines = before === '' ? [] : before.split(br);
-      const final = before !== '' && before.endsWith(br);
-      if (final) lines.pop();
+      // One source of truth for the file's line break, lines and final break (section 3):
+      // splitFile/joinFile, not a second copy of the split logic.
+      const { br, lines, final } = splitFile(before);
       if (line < 0 || line > lines.length) throw new Fail('no-match', p);
       lines.splice(line, 0, ...add);
-      tree.now.set(p, lines.length === 0 ? '' : lines.join(br) + (final ? br : ''));
+      tree.now.set(p, joinFile(br, lines, final));
     };
   }
   return null;
@@ -276,14 +274,21 @@ function dashPath(l: string): string | null {
   if (s.startsWith('a/') || s.startsWith('b/')) s = s.slice(2);
   return s;
 }
-/** The paths of a `diff --git a/<X> b/<Y>` line, or null when it is not of that form. */
+/** The paths of a `diff --git a/<X> b/<Y>` line, or null when it is not of that form.
+ * Split at the LAST ` b/`: X may itself hold spaces (and even ` b/`), while the separator
+ * before Y is the last one. Each side is cut at its first tab (as `---`/`+++` paths are,
+ * SPEC.md section 6) and its surrounding spaces removed. */
 function diffGitPaths(l: string): [string, string] | null {
   if (!l.startsWith('diff --git a/')) return null;
   const rest = l.slice('diff --git a/'.length);
   const idx = rest.lastIndexOf(' b/');
   if (idx < 0) return null;
-  const x = rest.slice(0, idx).trim();
-  const y = rest.slice(idx + 3).trim();
+  const cutTab = (s: string): string => {
+    const t = s.indexOf('\t');
+    return (t >= 0 ? s.slice(0, t) : s).trim();
+  };
+  const x = cutTab(rest.slice(0, idx));
+  const y = cutTab(rest.slice(idx + 3));
   if (x === '' || y === '') return null;
   return [x, y];
 }
